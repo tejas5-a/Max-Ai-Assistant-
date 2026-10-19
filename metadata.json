@@ -1,0 +1,6 @@
+{
+  "name": "MAX AI ASSISTANT",
+  "description": "Modular native Android AI assistant app with OpenRouter chat, Pollinations image generation, live web search, voice controls, productivity tasks, and scheduled automations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
