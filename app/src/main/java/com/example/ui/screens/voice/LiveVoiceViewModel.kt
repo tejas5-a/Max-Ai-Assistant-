@@ -60,6 +60,10 @@ class LiveVoiceViewModel(
         preferencesRepository = preferencesRepository
     )
 
+    init {
+        voiceCommandDispatcher.initContext(context)
+    }
+
     val uiState: StateFlow<LiveVoiceUiState> = combine(
         controller.voiceState,
         controller.audioAmplitude,

@@ -151,13 +151,23 @@ class ConversationalVoiceController(
 
     fun startListening() {
         if (!isSessionActive) return
-        if (speechRecognizer == null) {
-            _voiceState.value = VoiceState.ERROR
-            _errorMessage.value = "Speech recognition service is unavailable on this device."
+
+        // 1. Verify Microphone Permission at Runtime
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            _voiceState.value = VoiceState.REQUESTING_PERMISSION
+            _errorMessage.value = "Microphone permission is required for voice commands."
+            VoiceLogger.logPermissionStatus(android.Manifest.permission.RECORD_AUDIO, false)
             return
         }
 
-        if (_voiceState.value == VoiceState.SPEAKING || _voiceState.value == VoiceState.PROCESSING) {
+        if (speechRecognizer == null) {
+            _voiceState.value = VoiceState.ERROR
+            _errorMessage.value = "Speech recognition service is unavailable on this device."
+            VoiceLogger.logError("SpeechRecognizer", "Service unavailable on device")
+            return
+        }
+
+        if (_voiceState.value == VoiceState.SPEAKING || _voiceState.value == VoiceState.THINKING) {
             return
         }
 
@@ -176,10 +186,14 @@ class ConversationalVoiceController(
         _currentTranscript.value = ""
         _audioAmplitude.value = 0f
         _voiceState.value = VoiceState.LISTENING
+        VoiceLogger.logSessionStart("Conversational Listening")
 
+        val langCode = activeSettings.selectedLanguage.code
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, activeSettings.selectedLanguage.code)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, langCode)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, langCode)
+            putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, false)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
@@ -190,6 +204,7 @@ class ConversationalVoiceController(
         } catch (e: Exception) {
             _voiceState.value = VoiceState.ERROR
             _errorMessage.value = e.localizedMessage ?: "Failed to start audio recording."
+            VoiceLogger.logError("SpeechRecognizer", e.message ?: "startListening failed")
         }
     }
 
@@ -263,7 +278,7 @@ class ConversationalVoiceController(
         cancelPendingStartListening()
         if (!isSessionActive) return
         val runnable = Runnable {
-            if (isSessionActive && _voiceState.value != VoiceState.SPEAKING && _voiceState.value != VoiceState.PROCESSING) {
+            if (isSessionActive && _voiceState.value != VoiceState.SPEAKING && _voiceState.value != VoiceState.THINKING && _voiceState.value != VoiceState.PROCESSING_AUDIO) {
                 startListening()
             }
         }
@@ -368,14 +383,14 @@ class ConversationalVoiceController(
     }
 
     private fun processUserTurn(text: String) {
-        _voiceState.value = VoiceState.PROCESSING
+        _voiceState.value = VoiceState.PROCESSING_AUDIO
         _audioAmplitude.value = 0f
 
         val userTurn = VoiceTurn(speaker = "user", text = text)
         _conversationHistory.value = _conversationHistory.value + userTurn
 
         processingJob = controllerScope.launch {
-            _voiceState.value = VoiceState.GENERATING
+            _voiceState.value = VoiceState.THINKING
             val result = voiceCommandDispatcher.dispatchVoiceInput(text, _conversationHistory.value)
 
             val (responseText, actionType, actionDetail) = when (result) {

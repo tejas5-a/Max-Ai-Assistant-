@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import com.example.ui.theme.StatusSuccess
+import com.example.ui.theme.StatusError
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -70,7 +73,9 @@ import com.example.ui.theme.ThemeMode
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
-    viewModel: SettingsViewModel
+    viewModel: SettingsViewModel,
+    onNavigateToProviders: () -> Unit = {},
+    onNavigateToModels: () -> Unit = {}
 ) {
     val settings by viewModel.settings.collectAsState()
     val context = LocalContext.current
@@ -85,12 +90,28 @@ fun SettingsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Header
+        // Quick Navigation to Provider Config & Model Management Screens
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings", tint = ElectricCyan)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(text = "Settings & AI Providers", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onNavigateToProviders,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = com.example.ui.theme.PrimaryOrange)
+                ) {
+                    Text("AI Providers Config", fontSize = 12.sp)
+                }
+
+                OutlinedButton(
+                    onClick = onNavigateToModels,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Model Management", fontSize = 12.sp)
+                }
             }
         }
 
@@ -639,13 +660,67 @@ fun SettingsScreen(
     }
 
     if (isAssistantInfoDialogOpen) {
+        val permissions = viewModel.getPermissionDashboard(context)
+        val capabilities = viewModel.getCapabilityMatrix()
+
         AlertDialog(
             onDismissRequest = { isAssistantInfoDialogOpen = false },
-            title = { Text("Default Assistant Integration", fontWeight = FontWeight.Bold) },
-            text = { Text(VoiceAssistantHelper.assistantCapabilitiesExplanation, fontSize = 13.sp, lineHeight = 19.sp) },
+            title = { Text("MAX Capability & Permission Dashboard", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            text = {
+                LazyColumn(modifier = Modifier.height(360.dp)) {
+                    item {
+                        Text("PERMISSION DASHBOARD", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = ElectricCyan)
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+                    items(permissions) { perm ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(perm.title, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text(perm.description, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (perm.isGranted) "GRANTED" else "NOT GRANTED",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (perm.isGranted) StatusSuccess else StatusError
+                            )
+                        }
+                    }
+                    item {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text("CAPABILITY MATRIX", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = ElectricCyan)
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+                    items(capabilities) { cap ->
+                        Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(cap.name, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text(
+                                    text = cap.status.name,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ElectricCyan
+                                )
+                            }
+                            Text("Category: ${cap.category} | Class: ${cap.implementationClass.substringAfterLast('.')}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(cap.description, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            },
             confirmButton = {
                 Button(onClick = { isAssistantInfoDialogOpen = false }) {
-                    Text("Understood")
+                    Text("Close")
                 }
             }
         )

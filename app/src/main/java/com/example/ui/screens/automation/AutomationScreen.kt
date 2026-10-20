@@ -54,7 +54,9 @@ import com.example.ui.theme.StatusSuccess
 
 @Composable
 fun AutomationScreen(
-    viewModel: AutomationViewModel
+    viewModel: AutomationViewModel,
+    onNavigateToBuilder: () -> Unit = {},
+    onNavigateToHistory: () -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsState()
     var promptInput by remember { mutableStateOf("") }
@@ -65,6 +67,30 @@ fun AutomationScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onNavigateToBuilder,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = com.example.ui.theme.PrimaryOrange)
+                ) {
+                    Text("Visual Builder", fontSize = 12.sp)
+                }
+
+                OutlinedButton(
+                    onClick = onNavigateToHistory,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Execution History", fontSize = 12.sp)
+                }
+            }
+        }
+
         // Natural Language Workflow Builder Input Card
         item {
             Surface(

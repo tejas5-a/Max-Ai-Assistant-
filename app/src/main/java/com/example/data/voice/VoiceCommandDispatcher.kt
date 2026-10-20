@@ -1,18 +1,14 @@
 package com.example.data.voice
 
-import com.example.data.automation.WorkflowParser
-import com.example.data.model.OpenRouterMessage
+import android.content.Context
 import com.example.data.model.TaskItem
-import com.example.data.model.TaskPriority
-import com.example.data.remote.GeminiApiService
+import com.example.data.orchestrator.AssistantOrchestrator
 import com.example.data.remote.OpenRouterService
 import com.example.data.remote.PollinationsService
 import com.example.data.remote.WebSearchService
 import com.example.data.repository.AutomationRepository
 import com.example.data.repository.PreferencesRepository
 import com.example.data.repository.TaskRepository
-import kotlinx.coroutines.flow.first
-import java.util.UUID
 
 sealed class VoiceCommandResult {
     data class SpokenAnswer(val text: String) : VoiceCommandResult()
@@ -29,138 +25,39 @@ class VoiceCommandDispatcher(
     private val webSearchService: WebSearchService,
     private val taskRepository: TaskRepository,
     private val automationRepository: AutomationRepository,
-    private val preferencesRepository: PreferencesRepository
+    private val preferencesRepository: PreferencesRepository,
+    context: Context? = null
 ) {
-    private val geminiApiService = GeminiApiService()
+    private var orchestrator: AssistantOrchestrator? = if (context != null) {
+        AssistantOrchestrator(
+            context = context,
+            taskRepository = taskRepository,
+            automationRepository = automationRepository,
+            preferencesRepository = preferencesRepository
+        )
+    } else null
+
+    fun initContext(context: Context) {
+        if (orchestrator == null) {
+            orchestrator = AssistantOrchestrator(
+                context = context,
+                taskRepository = taskRepository,
+                automationRepository = automationRepository,
+                preferencesRepository = preferencesRepository
+            )
+        }
+    }
 
     suspend fun dispatchVoiceInput(
         userText: String,
         recentContext: List<VoiceTurn>
     ): VoiceCommandResult {
-        val trimmed = userText.trim()
-        val lower = trimmed.lowercase()
-        val settings = preferencesRepository.settingsFlow.first()
-
-        // 1. Task Creation Voice Intent
-        if (lower.startsWith("add task") || lower.startsWith("create task") || lower.startsWith("new task") || lower.startsWith("remind me to")) {
-            val taskTitle = trimmed
-                .removePrefix("add task")
-                .removePrefix("Add task")
-                .removePrefix("create task")
-                .removePrefix("Create task")
-                .removePrefix("new task")
-                .removePrefix("New task")
-                .removePrefix("remind me to")
-                .removePrefix("Remind me to")
-                .trim()
-                .trimStart(':', ' ')
-
-            if (taskTitle.isNotBlank()) {
-                val priority = when {
-                    lower.contains("high priority") || lower.contains("urgent") -> TaskPriority.HIGH
-                    lower.contains("low priority") -> TaskPriority.LOW
-                    else -> TaskPriority.MEDIUM
-                }
-                val cleanedTitle = taskTitle.replace("high priority", "", ignoreCase = true)
-                    .replace("low priority", "", ignoreCase = true)
-                    .replace("urgent", "", ignoreCase = true).trim()
-
-                val task = TaskItem(
-                    id = UUID.randomUUID().toString(),
-                    title = cleanedTitle,
-                    priority = priority,
-                    category = "Voice Created"
-                )
-                taskRepository.addTask(task)
-                return VoiceCommandResult.TaskCreated(
-                    text = "I've added the task '$cleanedTitle' with ${priority.name.lowercase()} priority to your tasks list.",
-                    task = task
-                )
-            }
+        val orch = orchestrator
+        return if (orch != null) {
+            orch.processInput(userText)
+        } else {
+            // Standalone fallback
+            VoiceCommandResult.SpokenAnswer("I heard: '$userText'. Processing via MAX Assistant.")
         }
-
-        // 2. Image Generation Voice Intent
-        if ((lower.startsWith("create an image") || lower.startsWith("generate an image") || lower.startsWith("draw") || lower.startsWith("make an image")) && settings.isPollinationsEnabled) {
-            val prompt = trimmed
-                .removePrefix("create an image of")
-                .removePrefix("Create an image of")
-                .removePrefix("generate an image of")
-                .removePrefix("Generate an image of")
-                .removePrefix("create an image")
-                .removePrefix("draw")
-                .removePrefix("Draw")
-                .removePrefix("make an image of")
-                .trim()
-
-            if (prompt.isNotBlank()) {
-                val genResult = pollinationsService.generateAndSaveImage(
-                    prompt = prompt,
-                    model = settings.selectedPollinationsModel,
-                    aspectRatio = settings.defaultAspectRatio
-                )
-                if (genResult.isSuccess) {
-                    val (path, _) = genResult.getOrThrow()
-                    return VoiceCommandResult.ImageCreated(
-                        text = "I generated that image for '$prompt'. You can see it on screen.",
-                        imagePath = path,
-                        prompt = prompt
-                    )
-                } else {
-                    return VoiceCommandResult.Error(
-                        text = "I couldn't generate the image right now: ${genResult.exceptionOrNull()?.message ?: "Check your connection."}"
-                    )
-                }
-            }
-        }
-
-        // 3. Web Search Voice Intent
-        if (lower.startsWith("search the web for") || lower.startsWith("search for") || lower.startsWith("web search") || lower.contains("what is the latest on") || lower.contains("current news about")) {
-            val query = trimmed
-                .removePrefix("search the web for")
-                .removePrefix("search for")
-                .removePrefix("web search")
-                .trim()
-
-            if (query.isNotBlank()) {
-                val searchResult = webSearchService.performSearch(query)
-                if (searchResult.isSuccess) {
-                    val sources = searchResult.getOrDefault(emptyList())
-                    if (sources.isNotEmpty()) {
-                        val topSnippet = sources.first().snippet
-                        val topDomain = sources.first().domain
-                        val responseText = "According to $topDomain: $topSnippet"
-                        return VoiceCommandResult.SearchAnswer(text = responseText, sourcesCount = sources.size)
-                    }
-                }
-            }
-        }
-
-        // 4. Scheduled Automation Voice Intent
-        if (lower.startsWith("automate") || lower.startsWith("schedule a workflow") || lower.startsWith("schedule a routine")) {
-            val autoPrompt = trimmed.removePrefix("automate").removePrefix("schedule a workflow to").trim()
-            if (autoPrompt.isNotBlank()) {
-                val workflow = WorkflowParser.parsePrompt(autoPrompt)
-                automationRepository.saveWorkflow(workflow)
-                return VoiceCommandResult.AutomationProposed(
-                    text = "I've drafted a workflow for '${workflow.title}' scheduled for ${workflow.scheduleDescription}. You can approve it in the Automations tab.",
-                    title = workflow.title
-                )
-            }
-        }
-
-        // 5. Conversational Voice AI via Gemini Live API (Dedicated Voice Provider)
-        val historyTurns = recentContext.takeLast(4).map { turn ->
-            val role = if (turn.speaker == "user") "user" else "assistant"
-            role to turn.text
-        }
-
-        val geminiResult = geminiApiService.sendVoicePrompt(
-            userText = trimmed,
-            history = historyTurns,
-            customApiKey = settings.realtimeVoiceApiKey
-        )
-
-        val spokenText = geminiResult.getOrDefault("Hello! I am MAX, your live voice assistant. How can I assist you?")
-        return VoiceCommandResult.SpokenAnswer(spokenText)
     }
 }

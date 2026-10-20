@@ -138,6 +138,15 @@ class ChatViewModel(
         }
     }
 
+    fun fetchModels() {
+        viewModelScope.launch {
+            val result = openRouterService.fetchModels()
+            if (result.isSuccess) {
+                _fetchedModels.value = result.getOrDefault(openRouterService.defaultModels)
+            }
+        }
+    }
+
     fun sendMessage(userText: String) {
         val convId = _currentConversationId.value ?: return
         if (userText.isBlank()) return

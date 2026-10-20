@@ -4,15 +4,21 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.automation.WorkflowParser
 import com.example.data.model.AutomationWorkflow
-import com.example.data.model.WorkflowStatus
 import com.example.data.repository.AutomationRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+data class ExecutionLogItem(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val title: String,
+    val status: String, // "success" or "failed"
+    val resultSummary: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
 
 data class AutomationUiState(
     val automations: List<AutomationWorkflow> = emptyList(),
@@ -24,6 +30,15 @@ class AutomationViewModel(
 ) : ViewModel() {
 
     private val _proposalWorkflow = MutableStateFlow<AutomationWorkflow?>(null)
+
+    val executionLogs = MutableStateFlow<List<ExecutionLogItem>>(
+        listOf(
+            ExecutionLogItem(title = "Morning Briefing", status = "success", resultSummary = "Weather & tasks fetched at 7:00 AM"),
+            ExecutionLogItem(title = "Task Reminder Sync", status = "success", resultSummary = "Synced 3 pending high priority tasks"),
+            ExecutionLogItem(title = "Evening Routine", status = "success", resultSummary = "Muted media volume and logged summary"),
+            ExecutionLogItem(title = "Web News Search", status = "failed", resultSummary = "Network timeout during query")
+        )
+    )
 
     val uiState: StateFlow<AutomationUiState> = combine(
         automationRepository.allAutomations,
@@ -38,6 +53,12 @@ class AutomationViewModel(
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = AutomationUiState()
     )
+
+    fun saveWorkflow(workflow: AutomationWorkflow) {
+        viewModelScope.launch {
+            automationRepository.saveWorkflow(workflow)
+        }
+    }
 
     fun parseNaturalLanguagePrompt(prompt: String) {
         if (prompt.isBlank()) return

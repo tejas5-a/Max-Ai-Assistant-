@@ -36,11 +36,13 @@ import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -137,6 +139,25 @@ fun ChatScreen(
                         expanded = isModelMenuExpanded,
                         onDismissRequest = { isModelMenuExpanded = false }
                     ) {
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "Fetch Models",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = ElectricCyan
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Fetch Available Models", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = ElectricCyan)
+                                }
+                            },
+                            onClick = {
+                                viewModel.fetchModels()
+                                Toast.makeText(context, "Fetching latest models...", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                        HorizontalDivider()
                         state.availableModels.forEach { item ->
                             DropdownMenuItem(
                                 text = {

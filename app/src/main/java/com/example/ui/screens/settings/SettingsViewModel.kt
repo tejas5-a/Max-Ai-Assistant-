@@ -124,4 +124,12 @@ class SettingsViewModel(
             taskRepository.clearAllTasks()
         }
     }
+
+    fun getCapabilityMatrix(): List<com.example.data.action.CapabilityInfo> {
+        return com.example.data.action.ActionRegistry.getCapabilityMatrix()
+    }
+
+    fun getPermissionDashboard(context: android.content.Context): List<com.example.data.orchestrator.PermissionStatusItem> {
+        return com.example.data.orchestrator.PermissionManager(context).getPermissionDashboard()
+    }
 }

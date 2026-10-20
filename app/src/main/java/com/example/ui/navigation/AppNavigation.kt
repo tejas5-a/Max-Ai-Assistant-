@@ -216,14 +216,62 @@ fun AppNavigation() {
                         val automationViewModel = viewModel<AutomationViewModel> {
                             AutomationViewModel(automationRepository)
                         }
-                        AutomationScreen(viewModel = automationViewModel)
+                        AutomationScreen(
+                            viewModel = automationViewModel,
+                            onNavigateToBuilder = { navController.navigate(Screen.AutomationBuilder.route) },
+                            onNavigateToHistory = { navController.navigate(Screen.ExecutionHistory.route) }
+                        )
+                    }
+
+                    composable(Screen.AutomationBuilder.route) {
+                        val automationViewModel = viewModel<AutomationViewModel> {
+                            AutomationViewModel(automationRepository)
+                        }
+                        com.example.ui.screens.automation.AutomationBuilderScreen(
+                            viewModel = automationViewModel,
+                            onBack = { navController.popBackStack() }
+                        )
+                    }
+
+                    composable(Screen.ExecutionHistory.route) {
+                        val automationViewModel = viewModel<AutomationViewModel> {
+                            AutomationViewModel(automationRepository)
+                        }
+                        com.example.ui.screens.history.ExecutionHistoryScreen(
+                            viewModel = automationViewModel,
+                            onBack = { navController.popBackStack() }
+                        )
+                    }
+
+                    composable(Screen.Providers.route) {
+                        val settingsViewModel = viewModel<SettingsViewModel> {
+                            SettingsViewModel(preferencesRepository, chatRepository, taskRepository)
+                        }
+                        com.example.ui.screens.providers.ProvidersScreen(
+                            viewModel = settingsViewModel,
+                            onBack = { navController.popBackStack() }
+                        )
+                    }
+
+                    composable(Screen.Models.route) {
+                        val settingsViewModel = viewModel<SettingsViewModel> {
+                            SettingsViewModel(preferencesRepository, chatRepository, taskRepository)
+                        }
+                        com.example.ui.screens.models.ModelsScreen(
+                            viewModel = settingsViewModel,
+                            onBack = { navController.popBackStack() }
+                        )
                     }
 
                     composable(Screen.Settings.route) {
                         val settingsViewModel = viewModel<SettingsViewModel> {
                             SettingsViewModel(preferencesRepository, chatRepository, taskRepository)
                         }
-                        SettingsScreen(viewModel = settingsViewModel)
+                        SettingsScreen(
+                            viewModel = settingsViewModel,
+                            onNavigateToProviders = { navController.navigate(Screen.Providers.route) },
+                            onNavigateToModels = { navController.navigate(Screen.Models.route) }
+                        )
                     }
                 }
             }
