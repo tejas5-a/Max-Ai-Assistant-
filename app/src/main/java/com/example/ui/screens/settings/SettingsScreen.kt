@@ -12,9 +12,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Image
@@ -23,11 +26,15 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -248,6 +255,11 @@ fun SettingsScreen(
 
         // OpenRouter AI Text Provider Settings Card
         item {
+            val availableModels by viewModel.availableModels.collectAsState()
+            val isFetchingModels by viewModel.isFetchingModels.collectAsState()
+            val fetchStatus by viewModel.fetchStatus.collectAsState()
+            var isModelMenuExpanded by remember { mutableStateOf(false) }
+
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
@@ -299,6 +311,137 @@ fun SettingsScreen(
                             unfocusedBorderColor = MaterialTheme.colorScheme.outline
                         )
                     )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Selected Model Summary
+                    Text(
+                        text = "Active AI Model:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surface
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = settings.selectedOpenRouterModelName.ifBlank { settings.selectedOpenRouterModel.substringAfterLast("/") },
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = ElectricCyan
+                            )
+                            Text(
+                                text = "ID: ${settings.selectedOpenRouterModel}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Action Buttons: Fetch Models & Model Selector Dropdown
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = { viewModel.fetchOpenRouterModels() },
+                            enabled = !isFetchingModels,
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            if (isFetchingModels) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Fetching...", fontSize = 12.sp)
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Fetch Models",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Fetch Models", fontSize = 12.sp)
+                            }
+                        }
+
+                        Box(modifier = Modifier.weight(1f)) {
+                            OutlinedButton(
+                                onClick = { isModelMenuExpanded = true },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Select Model", fontSize = 12.sp)
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Model"
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = isModelMenuExpanded,
+                                onDismissRequest = { isModelMenuExpanded = false }
+                            ) {
+                                availableModels.forEach { item ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(text = item.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                    if (item.isFree) {
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Surface(
+                                                            shape = RoundedCornerShape(4.dp),
+                                                            color = ElectricCyan.copy(alpha = 0.2f)
+                                                        ) {
+                                                            Text(
+                                                                text = "FREE",
+                                                                fontSize = 9.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = ElectricCyan,
+                                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                Text(text = item.id, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                if (item.description.isNotBlank()) {
+                                                    Text(text = item.description, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            viewModel.selectOpenRouterModel(item.id, item.name)
+                                            isModelMenuExpanded = false
+                                            Toast.makeText(context, "Selected ${item.name}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (!fetchStatus.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = fetchStatus!!,
+                            fontSize = 11.sp,
+                            color = ElectricCyan
+                        )
+                    }
                 }
             }
         }
