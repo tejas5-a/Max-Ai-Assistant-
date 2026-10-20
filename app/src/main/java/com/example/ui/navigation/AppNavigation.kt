@@ -27,7 +27,6 @@ import com.example.data.repository.AutomationRepository
 import com.example.data.repository.ChatRepository
 import com.example.data.repository.PreferencesRepository
 import com.example.data.repository.TaskRepository
-import com.example.ui.components.NeumorphicBottomNavigation
 import com.example.ui.components.NeumorphicTopAppBar
 import com.example.ui.screens.automation.AutomationScreen
 import com.example.ui.screens.automation.AutomationViewModel
@@ -126,21 +125,6 @@ fun AppNavigation() {
                             isPollinationsEnabled = settingsState?.isPollinationsEnabled ?: true,
                             onOpenDrawer = { scope.launch { drawerState.open() } },
                             onOpenSettings = { navController.navigate(Screen.Settings.route) }
-                        )
-                    }
-                },
-                bottomBar = {
-                    // Persistent bottom navigation is completely removed from the Home Screen
-                    if (!isImmersiveScreen && currentRoute != Screen.Home.route) {
-                        NeumorphicBottomNavigation(
-                            currentRoute = currentRoute,
-                            onNavigate = { screen ->
-                                navController.navigate(screen.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            }
                         )
                     }
                 }

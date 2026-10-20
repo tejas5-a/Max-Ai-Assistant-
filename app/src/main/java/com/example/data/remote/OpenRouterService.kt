@@ -2,6 +2,7 @@ package com.example.data.remote
 
 import com.example.data.model.OpenRouterMessage
 import com.example.data.model.OpenRouterModelItem
+import com.example.data.model.OpenRouterModelsListResponse
 import com.example.data.model.OpenRouterRequest
 import com.example.data.model.OpenRouterResponse
 import com.squareup.moshi.Moshi
@@ -12,6 +13,7 @@ import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
+import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
 import java.util.concurrent.TimeUnit
@@ -24,6 +26,9 @@ interface OpenRouterApi {
         @Header("X-Title") appTitle: String = "MAX AI ASSISTANT",
         @Body request: OpenRouterRequest
     ): Response<OpenRouterResponse>
+
+    @GET("models")
+    suspend fun getModels(): Response<OpenRouterModelsListResponse>
 }
 
 class OpenRouterService {
@@ -35,7 +40,7 @@ class OpenRouterService {
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .addInterceptor(HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
+            level = HttpLoggingInterceptor.Level.HEADERS
         })
         .build()
 
@@ -46,14 +51,44 @@ class OpenRouterService {
         .build()
         .create(OpenRouterApi::class.java)
 
-    val availableModels = listOf(
+    val defaultModels = listOf(
         OpenRouterModelItem("meta-llama/llama-3.3-70b-instruct:free", "Llama 3.3 70B (Free)", "High performance open model for reasoning & coding", true),
         OpenRouterModelItem("google/gemini-2.0-flash-exp:free", "Gemini 2.0 Flash (Free)", "Google's fast multimodal model with low latency", true),
         OpenRouterModelItem("deepseek/deepseek-r1:free", "DeepSeek R1 (Free)", "Advanced reasoning and problem-solving model", true),
         OpenRouterModelItem("mistralai/mistral-7b-instruct:free", "Mistral 7B (Free)", "Lightweight and fast conversational model", true),
-        OpenRouterModelItem("openai/gpt-4o-mini", "GPT-4o Mini (Key Required)", "Balanced speed and intelligence from OpenAI", false),
-        OpenRouterModelItem("anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet (Key Required)", "Anthropic state-of-the-art assistant model", false)
+        OpenRouterModelItem("openai/gpt-4o-mini", "GPT-4o Mini", "Balanced speed and intelligence from OpenAI", false),
+        OpenRouterModelItem("anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet", "Anthropic state-of-the-art assistant model", false)
     )
+
+    var availableModels: List<OpenRouterModelItem> = defaultModels
+        private set
+
+    suspend fun fetchModels(): Result<List<OpenRouterModelItem>> {
+        return try {
+            val response = api.getModels()
+            if (response.isSuccessful && response.body()?.data != null) {
+                val apiItems = response.body()!!.data!!
+                val mapped = apiItems.map { item ->
+                    val isFreeModel = item.id.endsWith(":free") ||
+                            (item.pricing?.prompt == "0" && item.pricing?.completion == "0")
+                    OpenRouterModelItem(
+                        id = item.id,
+                        name = item.name ?: item.id,
+                        description = item.description ?: if (isFreeModel) "Free OpenRouter Model" else "Standard OpenRouter Model",
+                        isFree = isFreeModel
+                    )
+                }
+                // Prioritize free models first, then sort alphabetically
+                val sorted = mapped.sortedWith(compareByDescending<OpenRouterModelItem> { it.isFree }.thenBy { it.name })
+                availableModels = sorted
+                Result.success(sorted)
+            } else {
+                Result.failure(Exception("HTTP ${response.code()} while fetching models"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 
     suspend fun sendChatPrompt(
         apiKey: String,

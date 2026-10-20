@@ -45,6 +45,7 @@ class ChatViewModel(
     private val _isLoading = MutableStateFlow(false)
     private val _isWebSearchEnabled = MutableStateFlow(false)
     private val _errorMessage = MutableStateFlow<String?>(null)
+    private val _fetchedModels = MutableStateFlow<List<OpenRouterModelItem>>(openRouterService.defaultModels)
 
     val uiState: StateFlow<ChatUiState> = combine(
         preferencesRepository.settingsFlow,
@@ -54,7 +55,8 @@ class ChatViewModel(
         _isWebSearchEnabled,
         voiceManager.isListening,
         voiceManager.speechText,
-        _errorMessage
+        _errorMessage,
+        _fetchedModels
     ) { args ->
         val settings = args[0] as AppSettings
         @Suppress("UNCHECKED_CAST")
@@ -65,6 +67,8 @@ class ChatViewModel(
         val listening = args[5] as Boolean
         val transcript = args[6] as String
         val error = args[7] as String?
+        @Suppress("UNCHECKED_CAST")
+        val models = args[8] as List<OpenRouterModelItem>
 
         ChatUiState(
             settings = settings,
@@ -72,7 +76,7 @@ class ChatViewModel(
             currentConversationId = currentId,
             messages = emptyList(), // Filled by separate message observer
             isLoading = loading,
-            availableModels = openRouterService.availableModels,
+            availableModels = models,
             isWebSearchEnabled = webSearch,
             isVoiceListening = listening,
             voiceTranscript = transcript,
@@ -95,6 +99,13 @@ class ChatViewModel(
                 } else if (_currentConversationId.value == null) {
                     createNewConversation()
                 }
+            }
+        }
+
+        viewModelScope.launch {
+            val result = openRouterService.fetchModels()
+            if (result.isSuccess) {
+                _fetchedModels.value = result.getOrDefault(openRouterService.defaultModels)
             }
         }
     }

@@ -43,6 +43,25 @@ data class OpenRouterErrorDetail(
     @Json(name = "code") val code: Int?
 )
 
+@JsonClass(generateAdapter = true)
+data class OpenRouterModelsListResponse(
+    @Json(name = "data") val data: List<OpenRouterApiItem>?
+)
+
+@JsonClass(generateAdapter = true)
+data class OpenRouterApiItem(
+    @Json(name = "id") val id: String,
+    @Json(name = "name") val name: String?,
+    @Json(name = "description") val description: String?,
+    @Json(name = "pricing") val pricing: OpenRouterPricing?
+)
+
+@JsonClass(generateAdapter = true)
+data class OpenRouterPricing(
+    @Json(name = "prompt") val prompt: String?,
+    @Json(name = "completion") val completion: String?
+)
+
 data class OpenRouterModelItem(
     val id: String,
     val name: String,
