@@ -117,12 +117,15 @@ class ChatRepository(
         }
         apiMessages.add(OpenRouterMessage("user", userText))
 
-        // 4. Send request to OpenRouter
+        // 4. Send request to OpenRouter using saved model ID in the 'model' field
+        val activeModelId = settings.selectedOpenRouterModel.ifBlank { "meta-llama/llama-3.3-70b-instruct:free" }
         val aiResult = openRouterService.sendChatPrompt(
             apiKey = settings.openRouterApiKey,
-            model = settings.selectedOpenRouterModel,
+            model = activeModelId,
             messages = apiMessages
         )
+
+        val modelLabel = settings.selectedOpenRouterModelName.ifBlank { activeModelId }
 
         val assistantMsg = if (aiResult.isSuccess) {
             ChatMessage(
@@ -130,7 +133,7 @@ class ChatRepository(
                 conversationId = conversationId,
                 role = "assistant",
                 content = aiResult.getOrDefault(""),
-                model = settings.selectedOpenRouterModel,
+                model = modelLabel,
                 sources = sources
             )
         } else {
@@ -139,7 +142,7 @@ class ChatRepository(
                 conversationId = conversationId,
                 role = "assistant",
                 content = aiResult.exceptionOrNull()?.message ?: "An unexpected error occurred.",
-                model = settings.selectedOpenRouterModel,
+                model = modelLabel,
                 isError = true
             )
         }

@@ -25,6 +25,7 @@ data class AppSettings(
     val isOpenRouterEnabled: Boolean = true,
     val openRouterApiKey: String = "",
     val selectedOpenRouterModel: String = "meta-llama/llama-3.3-70b-instruct:free",
+    val selectedOpenRouterModelName: String = "Llama 3.3 70B (Free)",
     
     // Pollinations Provider Configuration (Fully Independent!)
     val isPollinationsEnabled: Boolean = true,

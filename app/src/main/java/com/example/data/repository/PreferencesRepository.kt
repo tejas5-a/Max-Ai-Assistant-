@@ -25,6 +25,7 @@ class PreferencesRepository(private val context: Context) {
         val OPENROUTER_ENABLED = booleanPreferencesKey("openrouter_enabled")
         val OPENROUTER_KEY = stringPreferencesKey("openrouter_key")
         val OPENROUTER_MODEL = stringPreferencesKey("openrouter_model")
+        val OPENROUTER_MODEL_NAME = stringPreferencesKey("openrouter_model_name")
         val POLLINATIONS_ENABLED = booleanPreferencesKey("pollinations_enabled")
         val POLLINATIONS_MODEL = stringPreferencesKey("pollinations_model")
         val POLLINATIONS_ASPECT = stringPreferencesKey("pollinations_aspect")
@@ -54,6 +55,7 @@ class PreferencesRepository(private val context: Context) {
             isOpenRouterEnabled = prefs[Keys.OPENROUTER_ENABLED] ?: true,
             openRouterApiKey = prefs[Keys.OPENROUTER_KEY] ?: "",
             selectedOpenRouterModel = prefs[Keys.OPENROUTER_MODEL] ?: "meta-llama/llama-3.3-70b-instruct:free",
+            selectedOpenRouterModelName = prefs[Keys.OPENROUTER_MODEL_NAME] ?: "Llama 3.3 70B (Free)",
             isPollinationsEnabled = prefs[Keys.POLLINATIONS_ENABLED] ?: true,
             selectedPollinationsModel = prefs[Keys.POLLINATIONS_MODEL] ?: "flux",
             defaultAspectRatio = prefs[Keys.POLLINATIONS_ASPECT] ?: "1:1",
@@ -90,8 +92,13 @@ class PreferencesRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.OPENROUTER_KEY] = key.trim() }
     }
 
-    suspend fun setOpenRouterModel(model: String) {
-        context.dataStore.edit { it[Keys.OPENROUTER_MODEL] = model }
+    suspend fun setOpenRouterModel(modelId: String, modelName: String = "") {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.OPENROUTER_MODEL] = modelId.trim()
+            if (modelName.isNotBlank()) {
+                prefs[Keys.OPENROUTER_MODEL_NAME] = modelName.trim()
+            }
+        }
     }
 
     suspend fun setPollinationsEnabled(enabled: Boolean) {

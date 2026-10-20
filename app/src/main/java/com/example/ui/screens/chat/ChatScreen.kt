@@ -125,7 +125,7 @@ fun ChatScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = state.settings.selectedOpenRouterModel.substringAfterLast("/"),
+                                text = state.settings.selectedOpenRouterModelName.ifBlank { state.settings.selectedOpenRouterModel.substringAfterLast("/") },
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = ElectricCyan

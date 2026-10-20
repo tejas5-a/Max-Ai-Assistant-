@@ -132,7 +132,9 @@ class ChatViewModel(
 
     fun selectModel(modelId: String) {
         viewModelScope.launch {
-            preferencesRepository.setOpenRouterModel(modelId)
+            val matchedModel = _fetchedModels.value.find { it.id == modelId }
+            val displayName = matchedModel?.name ?: openRouterService.defaultModels.find { it.id == modelId }?.name ?: modelId.substringAfterLast("/")
+            preferencesRepository.setOpenRouterModel(modelId = modelId, modelName = displayName)
         }
     }
 

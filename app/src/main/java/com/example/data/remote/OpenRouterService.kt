@@ -1,5 +1,6 @@
 package com.example.data.remote
 
+import android.util.Log
 import com.example.data.model.OpenRouterMessage
 import com.example.data.model.OpenRouterModelItem
 import com.example.data.model.OpenRouterModelsListResponse
@@ -21,7 +22,8 @@ import java.util.concurrent.TimeUnit
 interface OpenRouterApi {
     @POST("chat/completions")
     suspend fun createChatCompletion(
-        @Header("Authorization") authHeader: String,
+        @Header("Authorization") authHeader: String?,
+        @Header("Content-Type") contentType: String = "application/json",
         @Header("HTTP-Referer") referer: String = "https://maxai.assistant",
         @Header("X-Title") appTitle: String = "MAX AI ASSISTANT",
         @Body request: OpenRouterRequest
@@ -32,6 +34,8 @@ interface OpenRouterApi {
 }
 
 class OpenRouterService {
+    private val TAG = "OpenRouterService"
+
     private val moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
         .build()
@@ -40,7 +44,7 @@ class OpenRouterService {
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .addInterceptor(HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.HEADERS
+            level = HttpLoggingInterceptor.Level.BASIC
         })
         .build()
 
@@ -78,14 +82,16 @@ class OpenRouterService {
                         isFree = isFreeModel
                     )
                 }
-                // Prioritize free models first, then sort alphabetically
                 val sorted = mapped.sortedWith(compareByDescending<OpenRouterModelItem> { it.isFree }.thenBy { it.name })
                 availableModels = sorted
                 Result.success(sorted)
             } else {
+                val errorBodyStr = response.errorBody()?.string()
+                Log.e(TAG, "GET models failed: HTTP ${response.code()} | Body: $errorBodyStr")
                 Result.failure(Exception("HTTP ${response.code()} while fetching models"))
             }
         } catch (e: Exception) {
+            Log.e(TAG, "Exception fetching models: ${e.localizedMessage}")
             Result.failure(e)
         }
     }
@@ -95,34 +101,90 @@ class OpenRouterService {
         model: String,
         messages: List<OpenRouterMessage>
     ): Result<String> {
-        val authHeader = if (apiKey.isNotBlank()) "Bearer $apiKey" else "Bearer free"
-        val request = OpenRouterRequest(model = model, messages = messages)
+        val cleanModel = model.trim()
+        val cleanApiKey = apiKey.trim()
+
+        if (cleanModel.isBlank()) {
+            return Result.failure(Exception("No AI model selected. Please select a model in Settings or the model dropdown."))
+        }
+
+        val authHeader = if (cleanApiKey.isNotBlank()) "Bearer $cleanApiKey" else null
+
+        val request = OpenRouterRequest(model = cleanModel, messages = messages)
+
+        Log.d(TAG, "POST https://openrouter.ai/api/v1/chat/completions | Model: $cleanModel | Messages Count: ${messages.size} | Auth Configured: ${cleanApiKey.isNotBlank()}")
 
         return try {
             val response = api.createChatCompletion(authHeader = authHeader, request = request)
+
             if (response.isSuccessful) {
                 val body = response.body()
-                val text = body?.choices?.firstOrNull()?.message?.content
-                if (!text.isNullOrEmpty()) {
-                    Result.success(text)
+                val responseText = body?.choices?.firstOrNull()?.message?.content
+                if (!responseText.isNullOrEmpty()) {
+                    Log.d(TAG, "OpenRouter HTTP ${response.code()} Success | Response Length: ${responseText.length}")
+                    Result.success(responseText)
                 } else if (body?.error != null) {
-                    Result.failure(Exception("OpenRouter Error: ${body.error.message ?: "Unknown error"}"))
+                    val serverErrMsg = body.error.message ?: "Unknown server error"
+                    Log.e(TAG, "OpenRouter 200 with Error JSON: $serverErrMsg")
+                    Result.failure(Exception("OpenRouter Error: $serverErrMsg"))
                 } else {
-                    Result.failure(Exception("Received empty response from OpenRouter AI."))
+                    Result.failure(Exception("Received empty response body from OpenRouter AI."))
                 }
             } else {
                 val errorCode = response.code()
-                val errorMsg = when (errorCode) {
-                    401 -> "Invalid OpenRouter API Key. Please check your key in Settings."
-                    402 -> "Payment required / OpenRouter credits exhausted."
-                    429 -> "OpenRouter rate limit reached. Please wait a moment and try again."
-                    500, 502, 503 -> "OpenRouter service is temporarily unavailable. Try switching models."
-                    else -> "OpenRouter API returned HTTP $errorCode."
+                val rawErrorBody = response.errorBody()?.string() ?: ""
+                Log.e(TAG, "OpenRouter HTTP $errorCode Failure | Model: $cleanModel | Raw Error Body: $rawErrorBody")
+
+                var parsedServerErrorMsg: String? = null
+                try {
+                    val errorAdapter = moshi.adapter(OpenRouterResponse::class.java)
+                    val parsedResp = errorAdapter.fromJson(rawErrorBody)
+                    parsedServerErrorMsg = parsedResp?.error?.message
+                } catch (_: Exception) {
+                    if (rawErrorBody.contains("message")) {
+                        val messageMatch = Regex("\"message\"\\s*:\\s*\"([^\"]+)\"").find(rawErrorBody)
+                        parsedServerErrorMsg = messageMatch?.groupValues?.get(1)
+                    }
                 }
-                Result.failure(Exception(errorMsg))
+
+                val finalErrorDetail = parsedServerErrorMsg ?: if (rawErrorBody.isNotBlank() && rawErrorBody.length < 200) rawErrorBody else null
+
+                val userFacingError = when (errorCode) {
+                    400 -> {
+                        val detail = finalErrorDetail ?: "Invalid request structure or unsupported parameter."
+                        "Invalid Request (400): $detail"
+                    }
+                    401 -> {
+                        val detail = finalErrorDetail ?: "Authentication failed. Please verify your OpenRouter API key in Settings."
+                        "Unauthorized (401): $detail"
+                    }
+                    402 -> {
+                        val detail = finalErrorDetail ?: "Insufficient credits or payment required. Please top up or choose a free model."
+                        "Payment Required (402): $detail"
+                    }
+                    404 -> {
+                        val detail = finalErrorDetail ?: "Model '$cleanModel' is not available on OpenRouter or endpoint was not found."
+                        "Model Not Found (404): $detail. Please choose an available model in Settings or the model dropdown."
+                    }
+                    429 -> {
+                        val detail = finalErrorDetail ?: "Rate limit reached on OpenRouter. Please wait a moment and try again."
+                        "Rate Limit Exceeded (429): $detail"
+                    }
+                    in 500..599 -> {
+                        val detail = finalErrorDetail ?: "OpenRouter provider service error."
+                        "Server Error ($errorCode): $detail"
+                    }
+                    else -> {
+                        val detail = finalErrorDetail ?: "Unexpected error response from server."
+                        "OpenRouter Error ($errorCode): $detail"
+                    }
+                }
+
+                Result.failure(Exception(userFacingError))
             }
         } catch (e: Exception) {
-            Result.failure(Exception(e.localizedMessage ?: "Failed to connect to OpenRouter service."))
+            Log.e(TAG, "Network exception during OpenRouter call: ${e.localizedMessage}")
+            Result.failure(Exception(e.localizedMessage ?: "Failed to connect to OpenRouter service. Please check your network connection."))
         }
     }
 }

@@ -44,4 +44,31 @@ class ExampleRobolectricTest {
     assertFalse(settings.isOpenRouterEnabled)
     assertFalse(settings.isPollinationsEnabled)
   }
+
+  @Test
+  fun `test default OpenRouter model list formatting`() {
+    val service = com.example.data.remote.OpenRouterService()
+    val defaultModels = service.defaultModels
+    assertTrue(defaultModels.isNotEmpty())
+    
+    // Ensure all default models have valid non-empty model IDs with provider prefixes
+    defaultModels.forEach { model ->
+      assertTrue(model.id.contains("/"))
+      assertTrue(model.name.isNotBlank())
+    }
+  }
+
+  @Test
+  fun `test separate model ID and display name storage in AppSettings`() {
+    val defaultSettings = AppSettings()
+    assertEquals("meta-llama/llama-3.3-70b-instruct:free", defaultSettings.selectedOpenRouterModel)
+    assertEquals("Llama 3.3 70B (Free)", defaultSettings.selectedOpenRouterModelName)
+
+    val customSettings = defaultSettings.copy(
+      selectedOpenRouterModel = "openai/gpt-4o-mini",
+      selectedOpenRouterModelName = "GPT-4o Mini"
+    )
+    assertEquals("openai/gpt-4o-mini", customSettings.selectedOpenRouterModel)
+    assertEquals("GPT-4o Mini", customSettings.selectedOpenRouterModelName)
+  }
 }
