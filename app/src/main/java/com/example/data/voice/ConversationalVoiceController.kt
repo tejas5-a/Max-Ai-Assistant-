@@ -2,6 +2,10 @@ package com.example.data.voice
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -11,7 +15,6 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import com.example.data.model.AppSettings
-import com.example.data.model.VoiceEngineMode
 import com.example.data.repository.PreferencesRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +24,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -33,6 +35,7 @@ class ConversationalVoiceController(
 
     private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
@@ -63,6 +66,12 @@ class ConversationalVoiceController(
     private var isSessionActive = false
     private var activeSettings: AppSettings = AppSettings()
 
+    // Protections against audio repeating and loops
+    private var lastSpokenAssistantText: String = ""
+    private var isStoppingTtsIntentionally = false
+    private var consecutiveBusyErrors = 0
+    private var startListeningRunnable: Runnable? = null
+
     init {
         initSpeechAndTts()
         controllerScope.launch {
@@ -87,26 +96,42 @@ class ConversationalVoiceController(
             tts?.language = Locale.US
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
-                    _voiceState.value = VoiceState.SPEAKING
+                    mainHandler.post {
+                        _voiceState.value = VoiceState.SPEAKING
+                        // Stop recognizer while TTS is speaking to prevent picking up assistant voice
+                        try {
+                            speechRecognizer?.stopListening()
+                            speechRecognizer?.cancel()
+                        } catch (e: Exception) {}
+                    }
                 }
 
                 override fun onDone(utteranceId: String?) {
                     mainHandler.post {
-                        if (isSessionActive && activeSettings.isHandsFreeLoopEnabled) {
-                            // Automatically transition to listening for the next turn!
-                            startListening()
+                        abandonAudioFocus()
+                        if (isSessionActive && activeSettings.isHandsFreeLoopEnabled && !isStoppingTtsIntentionally) {
+                            // Cooldown delay so acoustic echo clears before mic opens
+                            scheduleStartListening(650)
                         } else {
-                            _voiceState.value = VoiceState.IDLE
+                            if (_voiceState.value == VoiceState.SPEAKING) {
+                                _voiceState.value = VoiceState.IDLE
+                            }
                         }
                     }
                 }
 
                 override fun onError(utteranceId: String?) {
                     mainHandler.post {
+                        abandonAudioFocus()
+                        if (isStoppingTtsIntentionally) {
+                            return@post
+                        }
                         if (isSessionActive && activeSettings.isHandsFreeLoopEnabled) {
-                            startListening()
+                            scheduleStartListening(800)
                         } else {
-                            _voiceState.value = VoiceState.IDLE
+                            if (_voiceState.value == VoiceState.SPEAKING) {
+                                _voiceState.value = VoiceState.IDLE
+                            }
                         }
                     }
                 }
@@ -121,10 +146,7 @@ class ConversationalVoiceController(
         isSessionActive = true
         _errorMessage.value = null
         _voiceState.value = VoiceState.CONNECTING
-        
-        mainHandler.postDelayed({
-            startListening()
-        }, 300)
+        scheduleStartListening(300)
     }
 
     fun startListening() {
@@ -135,8 +157,22 @@ class ConversationalVoiceController(
             return
         }
 
-        // Interrupt any ongoing TTS
-        tts?.stop()
+        if (_voiceState.value == VoiceState.SPEAKING || _voiceState.value == VoiceState.PROCESSING) {
+            return
+        }
+
+        cancelPendingStartListening()
+
+        if (tts?.isSpeaking == true) {
+            isStoppingTtsIntentionally = true
+            try {
+                tts?.stop()
+            } finally {
+                mainHandler.postDelayed({ isStoppingTtsIntentionally = false }, 300)
+            }
+        }
+
+        requestAudioFocus()
         _currentTranscript.value = ""
         _audioAmplitude.value = 0f
         _voiceState.value = VoiceState.LISTENING
@@ -158,21 +194,34 @@ class ConversationalVoiceController(
     }
 
     fun stopListening() {
-        speechRecognizer?.stopListening()
+        cancelPendingStartListening()
+        try {
+            speechRecognizer?.stopListening()
+        } catch (e: Exception) {}
         if (_voiceState.value == VoiceState.LISTENING) {
             _voiceState.value = VoiceState.IDLE
         }
+        abandonAudioFocus()
     }
 
     fun interrupt() {
+        cancelPendingStartListening()
         processingJob?.cancel()
-        tts?.stop()
+        isStoppingTtsIntentionally = true
+        try {
+            tts?.stop()
+        } finally {
+            mainHandler.postDelayed({ isStoppingTtsIntentionally = false }, 300)
+        }
+        try {
+            speechRecognizer?.cancel()
+        } catch (e: Exception) {}
+
         _voiceState.value = VoiceState.INTERRUPTED
-        
+        abandonAudioFocus()
+
         if (isSessionActive) {
-            mainHandler.postDelayed({
-                startListening()
-            }, 250)
+            scheduleStartListening(400)
         }
     }
 
@@ -180,26 +229,103 @@ class ConversationalVoiceController(
         val next = !_isOutputMuted.value
         _isOutputMuted.value = next
         if (next) {
-            tts?.stop()
+            isStoppingTtsIntentionally = true
+            try {
+                tts?.stop()
+            } finally {
+                mainHandler.postDelayed({ isStoppingTtsIntentionally = false }, 300)
+            }
             if (_voiceState.value == VoiceState.SPEAKING && isSessionActive) {
-                startListening()
+                scheduleStartListening(400)
             }
         }
     }
 
     fun endSession() {
         isSessionActive = false
+        cancelPendingStartListening()
         processingJob?.cancel()
-        speechRecognizer?.cancel()
-        tts?.stop()
+        isStoppingTtsIntentionally = true
+        try {
+            tts?.stop()
+        } finally {
+            isStoppingTtsIntentionally = false
+        }
+        try {
+            speechRecognizer?.cancel()
+        } catch (e: Exception) {}
+        abandonAudioFocus()
         _voiceState.value = VoiceState.CLOSED
         _audioAmplitude.value = 0f
+    }
+
+    private fun scheduleStartListening(delayMs: Long) {
+        cancelPendingStartListening()
+        if (!isSessionActive) return
+        val runnable = Runnable {
+            if (isSessionActive && _voiceState.value != VoiceState.SPEAKING && _voiceState.value != VoiceState.PROCESSING) {
+                startListening()
+            }
+        }
+        startListeningRunnable = runnable
+        mainHandler.postDelayed(runnable, delayMs)
+    }
+
+    private fun cancelPendingStartListening() {
+        startListeningRunnable?.let { mainHandler.removeCallbacks(it) }
+        startListeningRunnable = null
+    }
+
+    private fun isSelfEcho(recognizedText: String): Boolean {
+        if (lastSpokenAssistantText.isBlank() || recognizedText.isBlank()) return false
+
+        val cleanInput = recognizedText.lowercase().replace(Regex("[^a-z0-9 ]"), "").trim()
+        val cleanSpoken = lastSpokenAssistantText.lowercase().replace(Regex("[^a-z0-9 ]"), "").trim()
+
+        if (cleanInput.isEmpty() || cleanSpoken.isEmpty()) return false
+
+        if (cleanSpoken.contains(cleanInput) || cleanInput.contains(cleanSpoken)) return true
+
+        val inputWords = cleanInput.split("\\s+".toRegex()).filter { it.length > 2 }.toSet()
+        val spokenWords = cleanSpoken.split("\\s+".toRegex()).filter { it.length > 2 }.toSet()
+
+        if (inputWords.isEmpty() || spokenWords.isEmpty()) return false
+
+        val overlap = inputWords.intersect(spokenWords).size
+        val minSize = minOf(inputWords.size, spokenWords.size)
+
+        return minSize > 0 && (overlap.toFloat() / minSize.toFloat()) >= 0.65f
+    }
+
+    private fun requestAudioFocus() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .build()
+                audioManager?.requestAudioFocus(focusRequest)
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager?.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            }
+        } catch (e: Exception) {}
+    }
+
+    private fun abandonAudioFocus() {
+        try {
+            @Suppress("DEPRECATION")
+            audioManager?.abandonAudioFocus(null)
+        } catch (e: Exception) {}
     }
 
     // RecognitionListener Callbacks
     override fun onRmsChanged(rmsdB: Float) {
         if (_voiceState.value == VoiceState.LISTENING) {
-            // Normalize -2dB..10dB to 0..1f
             val normalized = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
             _audioAmplitude.value = normalized
         }
@@ -207,22 +333,34 @@ class ConversationalVoiceController(
 
     override fun onPartialResults(partialResults: Bundle?) {
         val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-        if (!matches.isNullOrEmpty()) {
-            _currentTranscript.value = matches[0]
+        val text = matches?.firstOrNull() ?: ""
+        if (text.isNotBlank() && !isSelfEcho(text)) {
+            _currentTranscript.value = text
         }
     }
 
     override fun onResults(results: Bundle?) {
+        consecutiveBusyErrors = 0
         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
         val text = matches?.firstOrNull() ?: ""
 
         if (text.isNotBlank()) {
+            if (isSelfEcho(text)) {
+                // Ignore self echo
+                _currentTranscript.value = ""
+                if (isSessionActive && activeSettings.isHandsFreeLoopEnabled) {
+                    scheduleStartListening(500)
+                } else {
+                    _voiceState.value = VoiceState.IDLE
+                }
+                return
+            }
+
             _currentTranscript.value = text
             processUserTurn(text)
         } else {
-            // If empty in hands-free mode, keep listening
             if (isSessionActive && activeSettings.isHandsFreeLoopEnabled) {
-                mainHandler.postDelayed({ startListening() }, 300)
+                scheduleStartListening(400)
             } else {
                 _voiceState.value = VoiceState.IDLE
             }
@@ -233,7 +371,6 @@ class ConversationalVoiceController(
         _voiceState.value = VoiceState.PROCESSING
         _audioAmplitude.value = 0f
 
-        // Record User Turn
         val userTurn = VoiceTurn(speaker = "user", text = text)
         _conversationHistory.value = _conversationHistory.value + userTurn
 
@@ -251,6 +388,7 @@ class ConversationalVoiceController(
             }
 
             _assistantSpokenText.value = responseText
+            lastSpokenAssistantText = responseText
 
             val assistantTurn = VoiceTurn(
                 speaker = "assistant",
@@ -260,18 +398,17 @@ class ConversationalVoiceController(
             )
             _conversationHistory.value = _conversationHistory.value + assistantTurn
 
-            // Speak response aloud if not muted
             if (!_isOutputMuted.value && isTtsReady && tts != null) {
                 _voiceState.value = VoiceState.SPEAKING
                 tts?.setSpeechRate(activeSettings.speechRate)
                 tts?.setPitch(activeSettings.speechPitch)
                 val utteranceId = "MAX_VOICE_${System.currentTimeMillis()}"
+                requestAudioFocus()
                 tts?.speak(responseText, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
             } else {
-                // If muted, wait a brief duration to let user read, then resume hands-free listening
                 _voiceState.value = VoiceState.IDLE
                 if (isSessionActive && activeSettings.isHandsFreeLoopEnabled) {
-                    mainHandler.postDelayed({ startListening() }, 2000)
+                    scheduleStartListening(1500)
                 }
             }
         }
@@ -283,17 +420,24 @@ class ConversationalVoiceController(
 
         when (error) {
             SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
-                // In continuous hands-free mode, rearm listening seamlessly
-                if (activeSettings.isHandsFreeLoopEnabled && _voiceState.value == VoiceState.LISTENING) {
-                    mainHandler.postDelayed({ startListening() }, 400)
+                consecutiveBusyErrors = 0
+                if (activeSettings.isHandsFreeLoopEnabled && isSessionActive && _voiceState.value != VoiceState.SPEAKING) {
+                    scheduleStartListening(500)
                 } else {
                     _voiceState.value = VoiceState.IDLE
                 }
             }
             SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
-                mainHandler.postDelayed({ startListening() }, 600)
+                consecutiveBusyErrors++
+                if (consecutiveBusyErrors < 3 && isSessionActive && activeSettings.isHandsFreeLoopEnabled) {
+                    scheduleStartListening(800)
+                } else {
+                    consecutiveBusyErrors = 0
+                    _voiceState.value = VoiceState.IDLE
+                }
             }
             else -> {
+                consecutiveBusyErrors = 0
                 val message = when (error) {
                     SpeechRecognizer.ERROR_AUDIO -> "Audio recording hardware error."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition network timeout."
@@ -314,6 +458,7 @@ class ConversationalVoiceController(
 
     fun destroy() {
         endSession()
+        mainHandler.removeCallbacksAndMessages(null)
         speechRecognizer?.destroy()
         speechRecognizer = null
         tts?.stop()
@@ -322,3 +467,4 @@ class ConversationalVoiceController(
         controllerScope.cancel()
     }
 }
+

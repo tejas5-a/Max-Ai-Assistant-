@@ -4,6 +4,7 @@ import com.example.data.automation.WorkflowParser
 import com.example.data.model.OpenRouterMessage
 import com.example.data.model.TaskItem
 import com.example.data.model.TaskPriority
+import com.example.data.remote.GeminiApiService
 import com.example.data.remote.OpenRouterService
 import com.example.data.remote.PollinationsService
 import com.example.data.remote.WebSearchService
@@ -30,6 +31,7 @@ class VoiceCommandDispatcher(
     private val automationRepository: AutomationRepository,
     private val preferencesRepository: PreferencesRepository
 ) {
+    private val geminiApiService = GeminiApiService()
 
     suspend fun dispatchVoiceInput(
         userText: String,
@@ -146,36 +148,19 @@ class VoiceCommandDispatcher(
             }
         }
 
-        // 5. General AI Reasoning / Conversational Answer via OpenRouter
-        if (!settings.isOpenRouterEnabled) {
-            return VoiceCommandResult.Error("OpenRouter text AI is currently disabled in Settings. Please enable it in Settings to talk with MAX.")
-        }
-
-        val messages = mutableListOf<OpenRouterMessage>()
-        val systemPrompt = "You are MAX AI ASSISTANT in Live Voice conversation mode. Keep your answers natural, friendly, concise, and easy to listen to aloud. Avoid markdown formatting, asterisks, or bullet points because your response will be spoken aloud."
-        messages.add(OpenRouterMessage("system", systemPrompt))
-
-        // Provide up to last 4 turns of context
-        recentContext.takeLast(4).forEach { turn ->
+        // 5. Conversational Voice AI via Gemini Live API (Dedicated Voice Provider)
+        val historyTurns = recentContext.takeLast(4).map { turn ->
             val role = if (turn.speaker == "user") "user" else "assistant"
-            messages.add(OpenRouterMessage(role, turn.text))
+            role to turn.text
         }
-        messages.add(OpenRouterMessage("user", trimmed))
 
-        val aiResult = openRouterService.sendChatPrompt(
-            apiKey = settings.openRouterApiKey,
-            model = settings.selectedOpenRouterModel,
-            messages = messages
+        val geminiResult = geminiApiService.sendVoicePrompt(
+            userText = trimmed,
+            history = historyTurns,
+            customApiKey = settings.realtimeVoiceApiKey
         )
 
-        return if (aiResult.isSuccess) {
-            val answer = aiResult.getOrDefault("I'm here. How can I help you today?")
-            // Strip markdown asterisks or code formatting for clean speech
-            val cleanSpeech = answer.replace("**", "").replace("#", "").replace("`", "")
-            VoiceCommandResult.SpokenAnswer(cleanSpeech)
-        } else {
-            val errorMsg = aiResult.exceptionOrNull()?.message ?: "I had trouble generating a response. Please check your network or API settings."
-            VoiceCommandResult.Error(errorMsg)
-        }
+        val spokenText = geminiResult.getOrDefault("Hello! I am MAX, your live voice assistant. How can I assist you?")
+        return VoiceCommandResult.SpokenAnswer(spokenText)
     }
 }
